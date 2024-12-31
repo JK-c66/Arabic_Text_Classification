@@ -134,20 +134,31 @@ def process_file(file, file_type, categories, batch_size=10, column=None, separa
                 st.error(f"Column '{column}' not found in CSV file")
                 return None
             texts = df[column].tolist()
-            # Store original texts before masking
-            df['original_text'] = texts
-            # Apply privacy masking
-            texts = [mask_ids(text) for text in texts]
-            df[column] = texts
+            # Apply privacy masking and check if any masking occurred
+            masked_texts = [mask_ids(text) for text in texts]
+            was_masked = any(orig != masked for orig, masked in zip(texts, masked_texts))
+            
+            if was_masked:
+                df['original_text'] = texts
+                df[column] = masked_texts
+                texts = masked_texts
+            else:
+                texts = df[column].tolist()
         else:  
             content = file.getvalue().decode('utf-8')
             texts = [text.strip() for text in content.split(separator) if text.strip()]
-            # Create DataFrame with both original and masked texts
-            df = pd.DataFrame({
-                'original_text': texts,
-                'text': [mask_ids(text) for text in texts]
-            })
-            texts = df['text'].tolist()
+            # Apply privacy masking and check if any masking occurred
+            masked_texts = [mask_ids(text) for text in texts]
+            was_masked = any(orig != masked for orig, masked in zip(texts, masked_texts))
+            
+            if was_masked:
+                df = pd.DataFrame({
+                    'original_text': texts,
+                    'text': masked_texts
+                })
+                texts = masked_texts
+            else:
+                df = pd.DataFrame({'text': texts})
         
         total_items = len(texts)
         classifications = []
@@ -169,16 +180,12 @@ def process_file(file, file_type, categories, batch_size=10, column=None, separa
             remaining_time = estimated_total_time - elapsed_time
             status_text.text(f"تمت معالجة {min(i + batch_size, total_items)}/{total_items} نص. الوقت المتبقي: {remaining_time:.1f} ثانية")
         
-        if file_type == "CSV":
-            df['classification'] = classifications
-        else:
-            df = pd.DataFrame({'text': texts, 'classification': classifications})
-        
-        return df
+        df['classification'] = classifications
+        return df, was_masked
         
     except Exception as e:
         st.error(f"Error processing file: {str(e)}")
-        return None
+        return None, False
 
 # Visualization Functions
 def get_top_words(texts, n=5, min_length=2):
@@ -316,6 +323,16 @@ def setup_page_config():
     # Load external CSS
     with open("static/style.css") as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+    
+    # Add custom CSS for categories input
+    st.markdown("""
+        <style>
+        .stTextArea textarea {
+            font-size: 14px !important;
+            line-height: 1.5 !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
 
 def main():
     setup_page_config()
@@ -453,14 +470,13 @@ def main():
             col1, col2 = st.columns([2, 1])
             
             with col1:
-                use_default = st.checkbox("استخدام الفئات الافتراضية", value=True)
-                categories = DEFAULT_CATEGORIES if use_default else [
-                    cat.strip() for cat in st.text_area(
-                        "أدخل الفئات (فئة واحدة في كل سطر)",
-                        value="\n".join(DEFAULT_CATEGORIES)
-                    ).split("\n") if cat.strip()
-                ]
-                st.write("الفئات:", categories)
+                categories_input = st.text_area(
+                    "أدخل الفئات (فئة واحدة في كل سطر)",
+                    help="يجب إدخال فئة واحدة على الأقل"
+                )
+                categories = [cat.strip() for cat in categories_input.split("\n") if cat.strip()]
+                if categories:
+                    st.write("الفئات:", categories)
 
             with col2:
                 st.write("**⚙️ إعدادات المعالجة**")
@@ -476,8 +492,13 @@ def main():
                 st.session_state.classification_results = None
 
             if st.button("🚀 بدء التصنيف", use_container_width=True):
-                uploaded_file.seek(0)
-                st.session_state.classification_results = process_file(uploaded_file, file_type, categories, batch_size, column, separator)
+                if not categories:
+                    st.toast("يجب إدخال فئة واحدة على الأقل ⚠️", icon="⚠️")
+                else:
+                    uploaded_file.seek(0)
+                    results, was_masked = process_file(uploaded_file, file_type, categories, batch_size, column, separator)
+                    st.session_state.classification_results = results
+                    st.session_state.was_masked = was_masked
                 
             if st.session_state.classification_results is not None:
                 st.header("📊 النتائج")
@@ -486,11 +507,11 @@ def main():
                 fig = create_dashboard(st.session_state.classification_results)
                 st.plotly_chart(fig, use_container_width=True)
                 
-                # Modified download button with proper encoding
-                csv = st.session_state.classification_results.to_csv(index=False, encoding='utf-8-sig')
+                # CSV export with proper BOM for Excel compatibility
+                csv_data = st.session_state.classification_results.to_csv(index=False, encoding='utf-8-sig', quoting=1)
                 st.download_button(
                     label="📥 تحميل النتائج (CSV)",
-                    data=csv,
+                    data=csv_data.encode('utf-8-sig'),
                     file_name="classification_results.csv",
                     mime="text/csv",
                     use_container_width=True
