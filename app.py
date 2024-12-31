@@ -9,6 +9,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots   
 from collections import Counter
 import re
+import json
 
 # Constants and Configurations
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
@@ -16,17 +17,77 @@ DEFAULT_CATEGORIES = ["إيجابي", "سلبي", "محايد"]
 DEFAULT_BATCH_SIZE = 20
 DEFAULT_SEPARATOR = "\n"
 CUSTOM_COLORS = ['#2ecc71', '#e74c3c', '#3498db', '#f1c40f', '#9b59b6', '#1abc9c']
-STOP_WORDS = {'في', 'من', 'على', 'إلى', 'عن', 'مع', 'هذا', 'هذه', 'تم', 'فيه'}
+STOP_WORDS = {'في', 'من', 'على', 'إلى', 'عن', 'مع', 'هذا', 'هذه', 'تم', 'فيه', 'أن', 'كان',
+               'كانت', 'لم', 'لن', 'ما', 'هل', 'قد', 'لا', 'إن', 'كل', 'بعد', 'قبل', 'حتى', 'إذا',
+                'كيف','هو', 'هي', 'نحن', 'هم', 'هن', 'أنت', 'أنتم', 'أنتن', 'أنا', 'به', 'لها',
+                'لهم', 'لنا', 'له', 'منه', 'منها', 'منهم', 'عنه', 'عنها', 'عنهم', 'فيها', 'فيهم',
+                'بها', 'بهم','لك', 'لكم', 'لكن', 'ثم', 'أو', 'أم', 'بل', 'لا', 'و', 'ف', 'ب', 'ل', 'ك', 'و'}
 SEPARATOR_OPTIONS = [
     ("\n", "سطر جديد (↵)"),
     (",", "فاصلة (,)"),
     (".", "نقطة (.)"),
     (";", "فاصلة منقوطة (;)"),
-    ("custom", "فاصل مخصص ➕")
+    ("custom", "فاصل مخصص ✏️")
 ]
+SETTINGS_FILE = "config/privacy_settings.json"
+PRIVACY_CACHE_KEY = "privacy_patterns_cache"
 
 # Load environment variables
 load_dotenv()
+
+def load_privacy_settings():
+    """Load privacy settings from file with caching"""
+    try:
+        if PRIVACY_CACHE_KEY not in st.session_state:
+            if os.path.exists(SETTINGS_FILE):
+                with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                    st.session_state[PRIVACY_CACHE_KEY] = json.load(f)
+            else:
+                st.session_state[PRIVACY_CACHE_KEY] = {"id_patterns": []}
+        return st.session_state[PRIVACY_CACHE_KEY]
+    except Exception:
+        return {"id_patterns": []}
+
+def compile_patterns(settings):
+    """Compile regex patterns for better performance"""
+    compiled_patterns = []
+    for pattern in settings["id_patterns"]:
+        start_with = pattern["start_with"]
+        length = pattern["length"]
+        # Create regex pattern that matches numbers starting with start_with and having exact length
+        regex_pattern = f"\\b{start_with}\\d{{{length - len(start_with)}}}\\b"
+        compiled_patterns.append({
+            "regex": re.compile(regex_pattern),
+            "length": length,
+            "description": pattern.get("description", "")
+        })
+    return compiled_patterns
+
+def mask_ids(text):
+    """Mask IDs in text based on privacy settings with improved performance"""
+    if not isinstance(text, str):
+        return text
+        
+    settings = load_privacy_settings()
+    
+    # Get or compile patterns
+    if "compiled_patterns" not in st.session_state:
+        st.session_state.compiled_patterns = compile_patterns(settings)
+    
+    if not st.session_state.compiled_patterns:
+        return text
+    
+    masked_text = text
+    original_text = text
+    for pattern in st.session_state.compiled_patterns:
+        masked_text = pattern["regex"].sub("X" * pattern["length"], masked_text)
+    
+    # Check if any masking was applied
+    if masked_text != original_text and "masking_notified" not in st.session_state:
+        st.toast("تم تطبيق إخفاء المعرفات على النصوص 🔒", icon="ℹ️")
+        st.session_state.masking_notified = True
+    
+    return masked_text
 
 # Model Management
 @st.cache_resource
@@ -39,7 +100,9 @@ def classify_texts_batch_gemini(texts, categories):
     """Classify multiple texts at once using Gemini API"""
     try:
         model = get_gemini_model()
-        numbered_texts = "\n".join([f"{i}. {text}" for i, text in enumerate(texts, 1)])
+        # Apply privacy masking to each text
+        masked_texts = [mask_ids(text) for text in texts]
+        numbered_texts = "\n".join([f"{i}. {text}" for i, text in enumerate(masked_texts, 1)])
         prompt = f"""Classify each of the following numbered texts into exactly one of these categories: {', '.join(categories)}
 
 Texts to classify:
@@ -61,15 +124,30 @@ For your response:
 def process_file(file, file_type, categories, batch_size=10, column=None, separator=None):
     """Process either CSV or TXT file using batch classification"""
     try:
+        # Reset masking notification state for new file processing
+        if "masking_notified" in st.session_state:
+            del st.session_state.masking_notified
+            
         if file_type == "CSV":
             df = pd.read_csv(file)
             if column not in df.columns:
                 st.error(f"Column '{column}' not found in CSV file")
                 return None
             texts = df[column].tolist()
+            # Store original texts before masking
+            df['original_text'] = texts
+            # Apply privacy masking
+            texts = [mask_ids(text) for text in texts]
+            df[column] = texts
         else:  
             content = file.getvalue().decode('utf-8')
             texts = [text.strip() for text in content.split(separator) if text.strip()]
+            # Create DataFrame with both original and masked texts
+            df = pd.DataFrame({
+                'original_text': texts,
+                'text': [mask_ids(text) for text in texts]
+            })
+            texts = df['text'].tolist()
         
         total_items = len(texts)
         classifications = []
@@ -167,22 +245,23 @@ def create_dashboard(df):
     categories = df['classification'].unique()
     
     if len(categories) > 0:
-        for category in categories:
+        for idx, category in enumerate(categories):
             category_texts = df[df['classification'] == category][text_column]
             if not category_texts.empty:
                 top_words = get_top_words(category_texts)
                 for word, count in top_words:
                     word_data.append({
-                        'category': str(category),  # Ensure category is string
+                        'category': str(category),
                         'word': word,
-                        'count': count
+                        'count': count,
+                        'color': CUSTOM_COLORS[idx % len(CUSTOM_COLORS)]
                     })
 
     word_df = pd.DataFrame(word_data)
     
     if not word_df.empty:
         for idx, category in enumerate(categories):
-            category_words = word_df[word_df['category'] == str(category)]  # Match string category
+            category_words = word_df[word_df['category'] == str(category)]
             if not category_words.empty:
                 category_words = category_words.sort_values('count', ascending=True)
                 fig.add_trace(
@@ -190,7 +269,7 @@ def create_dashboard(df):
                         name=str(category),
                         x=category_words['count'],
                         y=category_words['word'],
-                        marker_color=CUSTOM_COLORS[idx % len(CUSTOM_COLORS)],  # Cycle through colors
+                        marker_color=category_words['color'].tolist(),
                         textfont=dict(size=14, family="Noto Kufi Arabic"),
                         hovertemplate="<b>%{y}</b><br>التكرار: %{x}<br>الفئة: " + str(category) + "<extra></extra>",
                         orientation='h',
@@ -229,8 +308,8 @@ def create_dashboard(df):
 def setup_page_config():
     """Configure page settings and styling"""
     st.set_page_config(
-        page_title="مصنف النصوص",
-        page_icon="🤖",
+        page_title="مصنف",
+        page_icon="📜",
         layout="centered"
     )
     
@@ -241,7 +320,7 @@ def setup_page_config():
 def main():
     setup_page_config()
     
-    st.title("🤖 مصنف النصوص العربية")
+    st.title("📜 مصنف النصوص العربية")
     st.write("قم برفع ملفك وتحديد الفئات لتصنيف النصوص تلقائياً.")
     
     # File upload section
@@ -263,48 +342,108 @@ def main():
             if file_type == "CSV":
                 df_preview = pd.read_csv(uploaded_file)
                 if not df_preview.empty and len(df_preview.columns) > 0:
-                    st.dataframe(df_preview.head(100), use_container_width=True)
                     column = st.selectbox("اختر العمود المراد تصنيفه:", df_preview.columns)
+                    
+                    if column:
+                        # Store original texts and create masked version
+                        original_texts = df_preview[column].tolist()
+                        masked_texts = [mask_ids(text) for text in original_texts]
+                        
+                        # Check if any masking was applied
+                        was_masked = any(orig != masked for orig, masked in zip(original_texts, masked_texts))
+                        
+                        if was_masked:
+                            st.markdown("### النص الأصلي")
+                            st.dataframe(df_preview[[column]].head(100), use_container_width=True)
+                            
+                            st.markdown("### النص بعد إخفاء المعرفات")
+                            masked_df = df_preview.copy()
+                            masked_df[column] = masked_texts
+                            st.dataframe(masked_df[[column]].head(100), use_container_width=True)
+                            
+                            if "masking_notified" not in st.session_state:
+                                st.toast("تم تطبيق إخفاء المعرفات على النصوص 🔒", icon="ℹ️")
+                                st.session_state.masking_notified = True
+                        else:
+                            st.dataframe(df_preview.head(100), use_container_width=True)
+                    
+                    # Display file information in one line
+                    st.markdown(f"""
+                    <div style='background-color: #f1f5f9; padding: 0.7rem; border-radius: 8px; margin: 0.5rem 0;'>
+                        <div style='display: flex; align-items: center; justify-content: space-between;'>
+                            <h3 style='margin: 0; color: #1E3A8A;'>📊 معلومات الملف</h3>
+                            <span>عدد الصفوف: {len(df_preview):,} | عدد الأعمدة: {len(df_preview.columns)}</span>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
                 else:
                     st.error("ملف CSV فارغ أو لا يحتوي على أعمدة.")
                     return
             else:
                 content = uploaded_file.getvalue().decode('utf-8')
                 if content.strip():
-                    st.text_area("محتوى الملف:", value=content, height=200)
+                    # Split content and create masked version
+                    texts = [text.strip() for text in content.split(separator) if text.strip()]
+                    masked_texts = [mask_ids(text) for text in texts]
+                    
+                    # Check if any masking was applied
+                    was_masked = any(orig != masked for orig, masked in zip(texts, masked_texts))
+                    
+                    if was_masked:
+                        st.markdown("### النص الأصلي")
+                        st.text_area("", value=content, height=200)
+                        
+                        st.markdown("### النص بعد إخفاء المعرفات")
+                        masked_content = separator.join(masked_texts)
+                        st.text_area("", value=masked_content, height=200)
+                        
+                        if "masking_notified" not in st.session_state:
+                            st.toast("تم تطبيق إخفاء المعرفات على النصوص 🔒", icon="ℹ️")
+                            st.session_state.masking_notified = True
+                    else:
+                        st.text_area("محتوى الملف:", value=content, height=200)
                     
                     # Separator selection with preview
                     st.write("**اختر الفاصل:**")
-                    separator_choice = st.selectbox(
-                        "نوع الفاصل",
-                        options=[opt[0] for opt in SEPARATOR_OPTIONS],
-                        format_func=lambda x: next((opt[1] for opt in SEPARATOR_OPTIONS if opt[0] == x), x),
-                        label_visibility="collapsed"
-                    )
+                    custom_col, select_col = st.columns([1, 1])
                     
-                    if separator_choice == "custom":
-                        custom_separator = st.text_input(
-                            "أدخل الفاصل المخصص:",
-                            value="",
-                            help="أدخل الرمز أو النص الذي يفصل بين النصوص",
+                    with select_col:
+                        separator_choice = st.selectbox(
+                            "نوع الفاصل",
+                            options=[opt[0] for opt in SEPARATOR_OPTIONS],
+                            format_func=lambda x: next((opt[1] for opt in SEPARATOR_OPTIONS if opt[0] == x), x),
                             label_visibility="collapsed"
                         )
-                        if custom_separator:
-                            separator = custom_separator
-                            st.markdown(f"""
-                            <div class='separator-preview'>
-                                الفاصل المختار: "{separator}"
-                            </div>
-                            """, unsafe_allow_html=True)
-                    else:
-                        separator = separator_choice
-                        display_separator = "↵" if separator == "\n" else separator
-                        st.markdown(
-                            "<div class='separator-preview'>"
-                            f"الفاصل المختار: \"{display_separator}\""
-                            "</div>",
-                            unsafe_allow_html=True
-                        )
+                    
+                    with custom_col:
+                        if separator_choice == "custom":
+                            custom_separator = st.text_input(
+                                "أدخل الفاصل المخصص:",
+                                value="",
+                                help="أدخل الرمز أو النص الذي يفصل بين النصوص",
+                                label_visibility="collapsed"
+                            )
+                            if custom_separator:
+                                separator = custom_separator
+                                st.markdown(f"<div class='separator-preview'>الفاصل المختار: \"{separator}\"</div>", unsafe_allow_html=True)
+                        else:
+                            separator = separator_choice
+                            display_separator = "↵" if separator == "\n" else separator
+                            st.markdown(f"<div class='separator-preview'>الفاصل المختار: \"{display_separator}\"</div>", unsafe_allow_html=True)
+
+                    # Recalculate texts based on current separator
+                    current_texts = [text.strip() for text in content.split(separator) if text.strip()]
+                    total_texts = len(current_texts)
+                    avg_length = sum(len(text) for text in current_texts) / total_texts if total_texts > 0 else 0
+                    
+                    st.markdown(f"""
+                    <div style='background-color: #f1f5f9; padding: 0.7rem; border-radius: 8px; margin: 0.5rem 0;'>
+                        <div style='display: flex; align-items: center; justify-content: space-between;'>
+                            <h3 style='margin: 0; color: #1E3A8A;'>📄 معلومات الملف</h3>
+                            <span>عدد النصوص: {total_texts:,} | متوسط طول النص: {avg_length:.1f} حرف</span>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
                 else:
                     st.error("ملف TXT فارغ.")
                     return
@@ -333,24 +472,29 @@ def main():
                     help="عدد النصوص التي سيتم معالجتها في كل طلب"
                 )
 
+            if 'classification_results' not in st.session_state:
+                st.session_state.classification_results = None
+
             if st.button("🚀 بدء التصنيف", use_container_width=True):
                 uploaded_file.seek(0)
-                df = process_file(uploaded_file, file_type, categories, batch_size, column, separator)
-                if df is not None:
-                    st.header("📊 النتائج")
-                    st.dataframe(df, use_container_width=True)
-                    
-                    fig = create_dashboard(df)
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    csv = df.to_csv(index=False)
-                    st.download_button(
-                        label="📥 تحميل النتائج (CSV)",
-                        data=csv,
-                        file_name="classification_results.csv",
-                        mime="text/csv",
-                        use_container_width=True
-                    )
+                st.session_state.classification_results = process_file(uploaded_file, file_type, categories, batch_size, column, separator)
+                
+            if st.session_state.classification_results is not None:
+                st.header("📊 النتائج")
+                st.dataframe(st.session_state.classification_results, use_container_width=True)
+                
+                fig = create_dashboard(st.session_state.classification_results)
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Modified download button with proper encoding
+                csv = st.session_state.classification_results.to_csv(index=False, encoding='utf-8-sig')
+                st.download_button(
+                    label="📥 تحميل النتائج (CSV)",
+                    data=csv,
+                    file_name="classification_results.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
 
         except Exception as e:
             st.error(f"حدث خطأ: {str(e)}")

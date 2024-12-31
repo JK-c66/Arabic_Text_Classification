@@ -1,0 +1,19 @@
+{
+    "id_patterns": [
+        {
+            "start_with": "05",
+            "length": 10,
+            "description": "رقم الجوال"
+        },
+        {
+            "start_with": "1",
+            "length": 10,
+            "description": "رقم الهوية"
+        },
+        {
+            "start_with": "2",
+            "length": 10,
+            "description": "رقم الهوية"
+        }
+    ]
+}
