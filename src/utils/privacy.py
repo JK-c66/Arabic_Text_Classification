@@ -4,6 +4,15 @@ import streamlit as st
 from src.config.constants import SETTINGS_FILE, PRIVACY_CACHE_KEY
 import os
 
+def clear_privacy_cache():
+    """Clear privacy settings cache from session state"""
+    if PRIVACY_CACHE_KEY in st.session_state:
+        del st.session_state[PRIVACY_CACHE_KEY]
+    if "compiled_patterns" in st.session_state:
+        del st.session_state["compiled_patterns"]
+    if "masking_notified" in st.session_state:
+        del st.session_state["masking_notified"]
+
 def load_privacy_settings():
     """Load privacy settings from file with caching"""
     try:
