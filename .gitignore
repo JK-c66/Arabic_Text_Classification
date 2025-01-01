@@ -1,3 +1,13 @@
 .env
 *.env
 __pycache__/
+src/config/__pycache__/__init__.cpython-311.pyc
+src/config/__pycache__/constants.cpython-311.pyc
+src/utils/__pycache__/__init__.cpython-311.pyc
+src/utils/__pycache__/file_processing.cpython-311.pyc
+src/utils/__pycache__/privacy.cpython-311.pyc
+src/models/__pycache__/__init__.cpython-311.pyc
+src/models/__pycache__/gemini_model.cpython-311.pyc
+src/visualization/__pycache__/__init__.cpython-311.pyc
+src/visualization/__pycache__/dashboard.cpython-311.pyc
+
