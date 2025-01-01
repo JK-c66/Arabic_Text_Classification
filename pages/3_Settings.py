@@ -1,6 +1,8 @@
 import streamlit as st
 import json
 import os
+from src.config.constants import SETTINGS_FILE, STATIC_DIR
+from src.utils.privacy import clear_privacy_cache
 
 # Constants
 SETTINGS_FILE = "config/privacy_settings.json"
@@ -197,18 +199,19 @@ def load_privacy_settings():
         if os.path.exists(SETTINGS_FILE):
             with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
-        return DEFAULT_SETTINGS
+        return {"id_patterns": []}
     except Exception as e:
-        st.error(f"Error loading settings: {str(e)}")
-        return DEFAULT_SETTINGS
+        st.error(f"خطأ في تحميل الإعدادات: {str(e)}")
+        return {"id_patterns": []}
 
 def save_privacy_settings(settings):
     """Save privacy settings to file"""
     try:
+        os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
         with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-            json.dump(settings, f, indent=4, ensure_ascii=False)
+            json.dump(settings, f, ensure_ascii=False, indent=4)
     except Exception as e:
-        st.error(f"Error saving settings: {str(e)}")
+        st.error(f"خطأ في حفظ الإعدادات: {str(e)}")
 
 def clear_privacy_cache():
     """Clear privacy settings cache from session state"""

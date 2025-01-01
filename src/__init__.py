@@ -1,0 +1,3 @@
+"""
+Arabic Text Classification Package
+""" 

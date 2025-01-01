@@ -6,12 +6,12 @@
             "description": "رقم الجوال"
         },
         {
-            "start_with": "1",
+            "start_with": "2",
             "length": 10,
             "description": "رقم الهوية"
         },
         {
-            "start_with": "2",
+            "start_with": "1",
             "length": 10,
             "description": "رقم الهوية"
         }

@@ -1,9 +1,12 @@
 import streamlit as st
 import pandas as pd
+import os
+import time
 from app import process_file, create_dashboard
+from src.config.constants import EXAMPLES_DIR, BASE_DIR
 
 # Constants
-EXAMPLE_FILE = "examples/Legal_Documents_Examples.csv"
+EXAMPLE_FILE = os.path.join(EXAMPLES_DIR, "Legal_Documents_Examples.csv")
 CATEGORIES = ["الجنائي", "التجاري", "الأسري", "الإداري"]
 BATCH_SIZE = 25
 
@@ -127,10 +130,19 @@ def main():
     """, unsafe_allow_html=True)
     
     try:
+        # First verify the file exists
+        if not os.path.exists(EXAMPLE_FILE):
+            st.error(f"ملف المثال غير موجود في المسار المتوقع: {EXAMPLE_FILE}")
+            st.write(f"المسار الحالي: {os.getcwd()}")
+            st.write(f"المسار الأساسي: {BASE_DIR}")
+            st.write(f"محتويات المجلد: {os.listdir(EXAMPLES_DIR)}")
+            return
+            
         df = pd.read_csv(EXAMPLE_FILE)
         st.dataframe(df.head(50), use_container_width=True)
     except Exception as e:
         st.error(f"خطأ في قراءة ملف المثال: {str(e)}")
+        st.write(f"المسار الكامل: {os.path.abspath(EXAMPLE_FILE)}")
         return
     
     # Modified process button section
@@ -138,15 +150,23 @@ def main():
     if st.button("🚀 تصنيف النصوص", use_container_width=True):
         try:
             with st.spinner("جاري معالجة النصوص..."):
-                st.session_state.results_df = process_file(
-                    open(EXAMPLE_FILE, 'rb'),
+                # Create a file-like object from the DataFrame
+                from io import StringIO
+                csv_buffer = StringIO()
+                df.to_csv(csv_buffer, index=False)
+                csv_buffer.seek(0)
+                
+                results_tuple = process_file(
+                    csv_buffer,
                     "CSV",
                     CATEGORIES,
                     BATCH_SIZE,
                     "Description"
                 )
+                st.session_state.results_df = results_tuple[0] if isinstance(results_tuple, tuple) else results_tuple
         except Exception as e:
             st.error(f"حدث خطأ أثناء معالجة الملف: {str(e)}")
+            st.write(f"نوع الخطأ: {type(e).__name__}")
             return
                 
     # Move results display outside the button condition
@@ -165,11 +185,11 @@ def main():
         fig = create_dashboard(st.session_state.results_df)
         st.plotly_chart(fig, use_container_width=True)
         
-        # Modified download button with proper encoding
-        csv = st.session_state.results_df.to_csv(index=False, encoding='utf-8-sig')
+        # Modified download button with proper encoding for Arabic text
+        csv_data = st.session_state.results_df.to_csv(index=False, encoding='utf-8-sig', quoting=1)
         st.download_button(
             label="📥 تحميل النتائج كملف CSV",
-            data=csv,
+            data=csv_data.encode('utf-8-sig'),
             file_name="legal_classification_results.csv",
             mime="text/csv",
             use_container_width=True
