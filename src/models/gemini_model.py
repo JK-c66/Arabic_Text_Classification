@@ -1,12 +1,16 @@
 import google.generativeai as genai
 import streamlit as st
-from src.config.constants import GEMINI_API_KEY
+# from src.config.constants import GEMINI_API_KEY
+
+
+GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+GEMINI_MODEL_NAME = 'gemini-1.5-flash'
 
 @st.cache_resource
 def get_gemini_model():
     """Lazy load Gemini model"""
     genai.configure(api_key=GEMINI_API_KEY)
-    return genai.GenerativeModel('gemini-1.5-flash')
+    return genai.GenerativeModel(GEMINI_MODEL_NAME)
 
 def classify_texts_batch_gemini(texts, categories):
     """Classify multiple texts at once using Gemini API"""
