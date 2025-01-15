@@ -14,4 +14,4 @@ secondaryBackgroundColor = "#F1F5F9"
 textColor = "#1E293B"
 
 # Font family for all text in the app, except code blocks
-font = "sans-serif" 
+font = "sans serif" 
