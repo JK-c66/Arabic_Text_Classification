@@ -121,6 +121,24 @@ st.markdown("""
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1) !important;
         background-color: #1D4ED8 !important;
     }
+    
+    /* Add these new rules for RTL tabs */
+    [data-testid="stTabs"] {
+        direction: rtl;
+    }
+    
+    [data-testid="stTabs"] > div:first-child {
+        direction: rtl;
+    }
+    
+    [data-testid="stTabs"] [data-baseweb="tab-list"] {
+        direction: rtl;
+    }
+    
+    [data-testid="stTabs"] [role="tab"] {
+        direction: rtl;
+        text-align: right;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -288,7 +306,7 @@ def main():
     """, unsafe_allow_html=True)
     
     # Create tabs
-    csv_tab, text_tab = st.tabs(["📁 تحليل ملف CSV", "✍️ تحليل نص مباشر"])
+    text_tab, csv_tab = st.tabs(["✍️ تحليل نص مباشر", "📁 تحليل ملف CSV"])
     
     # CSV Analysis Tab
     with csv_tab:
